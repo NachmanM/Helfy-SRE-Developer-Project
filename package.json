@@ -1,0 +1,31 @@
+{
+  "name": "helfy-sre-developer-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "docker:networks": "node scripts/create-networks.js",
+    "start": "npm run docker:networks && docker-compose up --build",
+    "start:detach": "npm run docker:networks && docker-compose up --build -d",
+    "stop": "docker-compose down",
+    "logs": "docker-compose logs -f",
+    "clean": "docker-compose down -v --remove-orphans"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NachmanM/Helfy-SRE-Developer-Project.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/NachmanM/Helfy-SRE-Developer-Project/issues"
+  },
+  "homepage": "https://github.com/NachmanM/Helfy-SRE-Developer-Project#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "log4js": "^6.9.1",
+    "mysql2": "^3.22.5"
+  }
+}

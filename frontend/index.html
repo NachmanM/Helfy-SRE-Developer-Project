@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TiDB Auth App</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .container { max-width: 300px; margin: 0 auto; }
+        input { width: 100%; padding: 8px; margin: 8px 0; display: box; }
+        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; cursor: pointer; }
+        #status { margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="password" id="password" placeholder="Password" required minlength="4">
+            <button type="submit">Sign In</button>
+        </form>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault(); 
+            const statusDiv = document.getElementById('status');
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+
+            statusDiv.innerText = "Authenticating...";
+            statusDiv.style.color = "blue";
+
+            try {
+                const loginResponse = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const loginData = await loginResponse.json();
+
+                if (!loginResponse.ok) {
+                    statusDiv.innerText = loginData.error || "Login Failed";
+                    statusDiv.style.color = "red";
+                    return;
+                }
+
+                const token = loginData.token;
+                localStorage.setItem('authToken', token);
+                statusDiv.innerText = "Token received. Validating against database...";
+
+
+                const validationResponse = await fetch('/api/verify-token', {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (validationResponse.ok) {
+                    // Execution reaches here only if the authenticateToken middleware passes
+                    statusDiv.innerText = "Login successful. Token validated.";
+                    statusDiv.style.color = "green";
+                } else {
+                    const validationData = await validationResponse.json();
+                    statusDiv.innerText = `Token Validation Failed: ${validationData.error}`;
+                    statusDiv.style.color = "red";
+                }
+
+            } catch (err) {
+                statusDiv.innerText = "Network Error.";
+                statusDiv.style.color = "red";
+            }
+        });
+    </script>
+</body>
+</html>

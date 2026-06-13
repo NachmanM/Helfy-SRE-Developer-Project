@@ -1,0 +1,176 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/api/Dockerfile
+    container_name: api
+    env_file:
+      - backend/api/.env
+    networks:
+      - tidb
+      - frontend
+    depends_on:
+      tidb:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "8080:80"
+    networks:
+      - frontend
+    depends_on:
+      - api
+
+  cdc-consumer:
+    build:
+      context: .
+      dockerfile: backend/kafka-consumers/Dockerfile
+    container_name: cdc-consumer
+    networks:
+      - kafka-consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  kafka:
+    image: apache/kafka:4.3.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:29092,EXTERNAL://kafka:9092'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 15s
+      retries: 30
+      start_period: 15s
+    networks:
+      - kafka-consumer
+      - kafka-producer
+    volumes:
+      - kafka_volume:/var/lib/kafka/data
+
+  pd:
+    image: pingcap/pd:v8.1.0
+    container_name: pd
+    command: [
+      "--name=pd",
+      "--client-urls=http://0.0.0.0:2379",
+      "--peer-urls=http://0.0.0.0:2380",
+      "--advertise-client-urls=http://pd:2379",
+      "--advertise-peer-urls=http://pd:2380",
+      "--initial-cluster=pd=http://pd:2380"
+    ]
+    ports:
+      - "2379:2379"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2379/pd/api/v1/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    networks:
+      - tidb
+    volumes:
+      - pd_volume:/data
+
+  tikv:
+    image: pingcap/tikv:v8.1.0
+    container_name: tikv
+    command: [
+      "--addr=0.0.0.0:20160",
+      "--advertise-addr=tikv:20160",
+      "--pd-endpoints=pd:2379"
+    ]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:20180/metrics"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    depends_on:
+      pd:
+        condition: service_healthy
+    networks:
+      - tidb
+    volumes:
+      - tikv_volume:/data
+
+  tidb:
+    image: pingcap/tidb:v8.1.0
+    container_name: tidb
+    command: [
+      "--store=tikv",
+      "--path=pd:2379"
+    ]
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:10080/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      tikv:
+        condition: service_healthy
+    networks:
+      - tidb
+
+  ticdc:
+    image: pingcap/ticdc:v8.1.0
+    container_name: ticdc
+    command:
+      - sh
+      - -c
+      - |
+        /cdc server --pd=http://pd:2379 --addr=0.0.0.0:8300 --advertise-addr=ticdc:8300 &
+        sleep 15
+        /cdc cli changefeed create \
+          --server=http://127.0.0.1:8300 \
+          --sink-uri='kafka://kafka:9092/db-mutations?protocol=canal-json' \
+          --changefeed-id='auto-console-cdc' || true
+        wait
+    ports:
+      - "8300:8300"
+    depends_on:
+      pd:
+        condition: service_healthy
+      tidb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - tidb
+      - kafka-producer
+
+networks:
+  tidb:
+    driver: bridge
+  frontend:
+    driver: bridge
+  kafka-consumer:
+    driver: bridge
+  kafka-producer:
+    driver: bridge
+
+volumes:
+  pd_volume:
+  tikv_volume:
+  kafka_volume:
